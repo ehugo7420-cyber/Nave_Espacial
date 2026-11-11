@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Galaxia Vectorial - Supervivencia Espacial</title>
+<style>
+body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+    background: #05070f; color: #cfd8ea; font-family: "Segoe UI", system-ui, sans-serif;
+}
+h1 { font-size: 1.25rem; margin: 0; letter-spacing: .04em; }
+canvas { background: #050716; border: 2px solid #50e1ff; border-radius: 10px; max-width: 100%; height: auto; cursor: default; }
+p { margin: 0; font-size: .92rem; text-align: center; padding: 0 12px; }
+kbd { background: #1b2238; border-radius: 4px; padding: 1px 6px; }
+</style>
+</head>
+<body>
+<h1>Galaxia Vectorial · Supervivencia Espacial</h1>
+<canvas id="juego" width="1000" height="700"></canvas>
+<p><kbd>W</kbd>/<kbd>↑</kbd> avanzar · <kbd>S</kbd>/<kbd>↓</kbd> retroceder · <kbd>A</kbd><kbd>D</kbd>/<kbd>←</kbd><kbd>→</kbd> girar · <kbd>Espacio</kbd> disparar · <kbd>C</kbd> cambiar rastro (5 pts)</p>
+
+<script>
+// ============================================================
+// JUEGO: NAVE ESPACIAL - GALAXIA  (versión web de tarea_nave_vectorial.py)
+// GitHub Pages solo ejecuta HTML, CSS y JavaScript, no Python ni pygame,
+// por eso el mismo juego está escrito aquí con canvas.
+// Controles:
+//   W / Flecha arriba: avanzar        S / Flecha abajo: retroceder
+//   A-D / Flechas izquierda-derecha: girar
+//   ESPACIO: disparar                 C: cambiar rastro de fuego (5 puntos)
+// ============================================================
+
+const canvas = document.getElementById('juego');
+const ctx = canvas.getContext('2d');
+
+const ANCHO = 1000, ALTO = 700;
+const TAU = Math.PI * 2;
+
+// Colores
+const BLANCO = [240, 245, 255], CIAN = [80, 225, 255], ROJO = [255, 45, 65];
+const AMARILLO = [255, 210, 80], GRIS = [145, 155, 180], OSCURO = [5, 7, 22], VERDE = [100, 255, 170];
+const col = (c, a) => (a === undefined ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${a})`);
+
+// Fuentes
+const FAMILIA = '"Segoe UI", system-ui, sans-serif';
+const FUENTE = '22px ' + FAMILIA;
+const FUENTE_CHICA = '16px ' + FAMILIA;
+const FUENTE_TITULO = 'bold 76px ' + FAMILIA;
+const FUENTE_BOTON = '23px ' + FAMILIA;
+
+// Utilidades de azar (equivalentes a random de Python)
+const uniform = (a, b) => a + Math.random() * (b - a);
+const randint = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+const randrange = (n) => Math.floor(Math.random() * n);
+const choice = (lista) => lista[randrange(lista.length)];
+
+// Utilidades de dibujo
+function circulo(x, y, r, color) {
+    ctx.fillStyle = col(color);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+}
+function poligono(puntos, relleno, borde, grosor) {
+    ctx.beginPath();
+    puntos.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
+    ctx.closePath();
+    if (relleno) { ctx.fillStyle = col(relleno); ctx.fill(); }
+    if (borde) { ctx.strokeStyle = col(borde); ctx.lineWidth = grosor || 1; ctx.stroke(); }
+}
+function rectRedondeado(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+}
+
+// ------------------------------------------------------------
+// FONDO ESPACIAL: estrellas, nebulosas y planetas
+// ------------------------------------------------------------
+const estrellas = [];
+for (let i = 0; i < 220; i++) {
+    estrellas.push({
+    x: randrange(ANCHO), y: randrange(ALTO),
+    radio: choice([1, 1, 1, 2]), brillo: randint(90, 255), fase: Math.random() * TAU
+    });
+}
+
+const planetas = [
+    { x: 150, y: 150, r: 42, color: [90, 95, 180], anillo: true },
+    { x: 850, y: 120, r: 26, color: [190, 100, 75], anillo: false },
+    { x: 800, y: 560, r: 52, color: [45, 130, 160], anillo: true }
+];
+
+// Nebulosas dibujadas como manchas translúcidas (en un lienzo aparte)
+const nebulosa = document.createElement('canvas');
+nebulosa.width = ANCHO; nebulosa.height = ALTO;
+const nctx = nebulosa.getContext('2d');
+for (let i = 0; i < 18; i++) {
+    const nx = randint(0, ANCHO), ny = randint(0, ALTO), nr = randint(45, 130);
+    const c = choice([[65, 25, 110, 15], [20, 65, 130, 18], [100, 25, 80, 13], [15, 100, 120, 12]]);
+    nctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${c[3] / 255})`;
+    nctx.beginPath(); nctx.arc(nx, ny, nr, 0, TAU); nctx.fill();
+}
+
+function dibujarFondo(tiempo) {
+    ctx.fillStyle = col(OSCURO);
+    ctx.fillRect(0, 0, ANCHO, ALTO);
+    ctx.drawImage(nebulosa, 0, 0);
+
+    // Galaxia espiral estilizada al fondo
+    const centroX = 500, centroY = 355;
+    for (let brazo = 0; brazo < 3; brazo++) {
+    for (let i = 0; i < 48; i++) {
+        const t = i / 48;
+        const radio = 18 + t * 180;
+        const ang = tiempo * 0.025 + brazo * (TAU / 3) + t * 4.2;
+        const gx = Math.trunc(centroX + Math.cos(ang) * radio);
+        const gy = Math.trunc(centroY + Math.sin(ang) * radio * 0.48);
+        const tam = Math.max(1, Math.trunc(3 * (1 - t)));
+        const brillo = Math.trunc(60 + 100 * (1 - t));
+        circulo(gx, gy, tam, [brillo, Math.trunc(brillo * 0.65), Math.min(255, brillo + 35)]);
+    }
+    }
+
+    // Estrellas titilantes
+    for (const e of estrellas) {
+    const brillo = Math.trunc(e.brillo * (0.72 + 0.28 * Math.sin(tiempo * 0.003 + e.fase)));
+    circulo(e.x, e.y, e.radio, [brillo, brillo, Math.min(255, brillo + 12)]);
+    }
+
+    // Planetas
+    for (const p of planetas) {
+    circulo(p.x, p.y, p.r, p.color);
+    circulo(p.x - Math.floor(p.r / 3), p.y - Math.floor(p.r / 3), Math.max(3, Math.floor(p.r / 3)),
+            p.color.map((c) => Math.min(255, c + 45)));
+    if (p.anillo) {
+        ctx.strokeStyle = col([165, 175, 220]); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(p.x, p.y, p.r + 13, 8, 0, 0, TAU); ctx.stroke();
+    }
+    }
+}
+
+// ------------------------------------------------------------
+// FUNCIONES GEOMÉTRICAS
+// ------------------------------------------------------------
+function transformarVertice(vertice, x, y, anguloGrados) {
+    const [vx, vy] = vertice;
+    const r = anguloGrados * Math.PI / 180;
+    const xRotado = vx * Math.cos(r) - vy * Math.sin(r);
+    const yRotado = vx * Math.sin(r) + vy * Math.cos(r);
+    return [x + xRotado, y + yRotado];
+}
+
+// Nave con silueta de cohete/avión espacial
+const MODELO_NAVE = [
+    [0, -27], [-8, -12], [-20, 7], [-18, 16],
+    [-8, 12], [0, 19], [8, 12], [18, 16],
+    [20, 7], [8, -12]
+];
+const ALAS_NAVE = [[-13, 5], [-30, 18], [-17, 17]];
+const ALAS_NAVE_DER = [[13, 5], [30, 18], [17, 17]];
+
+function dibujarNave(x, y, angulo, tiempo, colorTrail, invulnerable) {
+    // Rastro de fuego tras la nave
+    const r = angulo * Math.PI / 180;
+    const atrasX = -Math.sin(r), atrasY = Math.cos(r);
+    const largo = randint(13, 24);
+    const fuegoX = x + atrasX * 18, fuegoY = y + atrasY * 18;
+    const puntaFuego = [fuegoX + atrasX * largo, fuegoY + atrasY * largo];
+    const lado = 5;
+    const perpX = Math.cos(r), perpY = Math.sin(r);
+    if (Math.random() < 0.9) {
+    poligono([[fuegoX + perpX * lado, fuegoY + perpY * lado], puntaFuego,
+                [fuegoX - perpX * lado, fuegoY - perpY * lado]], colorTrail);
+    poligono([[fuegoX + perpX * 2, fuegoY + perpY * 2],
+                [fuegoX + atrasX * (largo * 0.7), fuegoY + atrasY * (largo * 0.7)],
+                [fuegoX - perpX * 2, fuegoY - perpY * 2]], [255, 245, 190]);
+    }
+
+    // Si está en invulnerabilidad, parpadea
+    if (invulnerable && Math.trunc(tiempo / 100) % 2 === 0) return;
+
+    const mover = (v) => transformarVertice(v, x, y, angulo);
+    const vertices = MODELO_NAVE.map(mover);
+    poligono(ALAS_NAVE.map(mover), [65, 105, 160]);
+    poligono(ALAS_NAVE_DER.map(mover), [65, 105, 160]);
+    poligono(vertices, [165, 205, 235], [55, 95, 135], 2);
+
+    // Cabina y detalles metálicos
+    poligono([[-5, -11], [0, -19], [5, -11], [3, -3], [-3, -3]].map(mover), [30, 210, 245]);
+    ctx.strokeStyle = col([35, 55, 90]); ctx.lineWidth = 2;
+    ctx.beginPath();
+    [[-9, 5], [0, 10], [9, 5]].map(mover).forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
+    ctx.stroke();
+}
+
+function crearExplosion(x, y, grande) {
+    const particulas = [];
+    const cantidad = grande ? 34 : 20;
+    for (let i = 0; i < cantidad; i++) {
+    const a = Math.random() * TAU;
+    const velocidad = uniform(45, grande ? 220 : 150);
+    particulas.push({
+        x, y, vx: Math.cos(a) * velocidad, vy: Math.sin(a) * velocidad,
+        vida: uniform(0.35, 0.85), vida_total: 0.85, radio: randint(2, 5),
+        color: choice([AMARILLO, [255, 120, 35], ROJO, [255, 245, 200]])
+    });
+    }
+    return particulas;
+}
+
+function dibujarExplosion(particulas, dt) {
+    for (let i = particulas.length - 1; i >= 0; i--) {
+    const p = particulas[i];
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vida -= dt;
+    p.vx *= 0.985; p.vy *= 0.985;
+    if (p.vida <= 0) {
+        particulas.splice(i, 1);
+    } else {
+        circulo(Math.trunc(p.x), Math.trunc(p.y), Math.max(1, Math.trunc(p.radio * p.vida / p.vida_total)), p.color);
+    }
+    }
+}
+
+// ------------------------------------------------------------
+// OBJETOS DEL JUEGO
+// ------------------------------------------------------------
+function posicionEnBorde(margen) {
+    const borde = choice(['arriba', 'abajo', 'izquierda', 'derecha']);
+    if (borde === 'arriba') return [randrange(ANCHO), -margen];
+    if (borde === 'abajo') return [randrange(ANCHO), ALTO + margen];
+    if (borde === 'izquierda') return [-margen, randrange(ALTO)];
+    return [ANCHO + margen, randrange(ALTO)];
+}
+
+function crearMeteorito() {
+    const [x, y] = posicionEnBorde(25);
+    return {
+    tipo: 'meteorito', x, y, vx: uniform(-65, 65), vy: uniform(-65, 65),
+    radio: randint(14, 25), vida: 1, angulo: randrange(360), giro: uniform(-70, 70)
+    };
+}
+
+function crearNaveEnemiga() {
+    const [x, y] = posicionEnBorde(30);
+    return { tipo: 'enemigo', x, y, vx: uniform(-55, 55), vy: uniform(-55, 55), radio: 19, vida: 1, angulo: 0 };
+}
+
+function dibujarMeteorito(m) {
+    const x = Math.trunc(m.x), y = Math.trunc(m.y), r = m.radio;
+    const puntos = [];
+    for (let i = 0; i < 10; i++) {
+    const a = TAU * i / 10;
+    const rr = r * uniform(0.78, 1.12);
+    puntos.push([Math.trunc(x + Math.cos(a) * rr), Math.trunc(y + Math.sin(a) * rr)]);
+    }
+    poligono(puntos, [115, 91, 83], [180, 135, 100], 2);
+    circulo(x - Math.floor(r / 4), y - Math.floor(r / 5), Math.max(2, Math.floor(r / 5)), [75, 68, 75]);
+    circulo(x + Math.floor(r / 3), y + Math.floor(r / 4), Math.max(2, Math.floor(r / 6)), [70, 60, 65]);
+}
+
+function dibujarEnemigo(e) {
+    const x = Math.trunc(e.x), y = Math.trunc(e.y);
+    poligono([[x, y - 21], [x + 24, y], [x + 10, y + 7], [x + 6, y + 15],
+            [x - 6, y + 15], [x - 10, y + 7], [x - 24, y]], [160, 55, 85], [255, 110, 140], 2);
+    ctx.fillStyle = col([90, 220, 255]);
+    ctx.beginPath(); ctx.ellipse(x, y - 2.5, 7, 4.5, 0, 0, TAU); ctx.fill();
+    circulo(x, y + 15, 4, [255, 120, 65]);
+}
+
+function dibujarTexto(texto, fuente, color, x, y, centro) {
+    ctx.font = fuente;
+    ctx.fillStyle = col(color);
+    ctx.textAlign = centro ? 'center' : 'left';
+    ctx.textBaseline = centro ? 'middle' : 'top';
+    ctx.fillText(texto, x, y);
+}
+
+function boton(rect, texto, habilitado, color) {
+    if (habilitado === undefined) habilitado = true;
+    const colorFondo = color || (habilitado ? [35, 55, 85] : [55, 58, 68]);
+    const colorTexto = habilitado ? BLANCO : [135, 140, 150];
+    rectRedondeado(rect.x, rect.y, rect.w, rect.h, 12);
+    ctx.fillStyle = col(colorFondo); ctx.fill();
+    ctx.strokeStyle = col(habilitado ? [100, 190, 225] : [90, 95, 105]); ctx.lineWidth = 2; ctx.stroke();
+    dibujarTexto(texto, FUENTE_BOTON, colorTexto, rect.x + rect.w / 2, rect.y + rect.h / 2, true);
+}
+
+// ------------------------------------------------------------
+// ESTADO Y REINICIO
+// ------------------------------------------------------------
+function reiniciarJuego() {
+    return {
+    x: ANCHO / 2, y: ALTO / 2, angulo: 0.0, vx: 0.0, vy: 0.0, puntos: 0,
+    proyectiles: [], objetos: [], explosiones: [],
+    ultimo_disparo: -500, ultimo_meteorito: 0, ultimo_enemigo: 0,
+    invulnerable_hasta: 0, trail_indice: 0, estado: 'jugando'
+    };
+}
+
+const coloresRastro = [
+    [255, 130, 35],   // fuego naranja
+    [70, 220, 255],   // fuego azul
+    [190, 100, 255],  // fuego violeta
+    [100, 255, 150],  // fuego verde
+    [255, 70, 130]    // fuego rosa
+];
+const nombresRastro = ['Naranja', 'Azul', 'Violeta', 'Verde', 'Rosa'];
+const COSTO_RASTRO = 5;
+const COSTO_CONTINUAR = 10;
+
+let juego = reiniciarJuego();
+
+// Botones de la pantalla de derrota y del menú
+const botonReintentar = { x: ANCHO / 2 - 190, y: 410, w: 170, h: 54 };
+const botonMenu = { x: ANCHO / 2 + 20, y: 410, w: 150, h: 54 };
+const botonContinuar = { x: ANCHO / 2 - 105, y: 485, w: 210, h: 54 };
+const botonMenuPrincipal = { x: ANCHO / 2 - 100, y: 430, w: 200, h: 55 };
+const dentro = (r, mx, my) => mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h;
+
+// ------------------------------------------------------------
+// ENTRADA: teclado y mouse
+// ------------------------------------------------------------
+const teclas = new Set();
+const BLOQUEAR = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
+
+addEventListener('keydown', (e) => {
+    if (BLOQUEAR.includes(e.code)) e.preventDefault();   // evita que la página se desplace
+    teclas.add(e.code);
+    if (e.repeat) return;                                // como pygame: un evento por pulsación
+    const ahora = performance.now();
+
+    if (juego.estado === 'jugando') {
+    if (e.code === 'Space' && ahora - juego.ultimo_disparo >= 250) {
+        const r = juego.angulo * Math.PI / 180;
+        // La punta local es (0, -27); se transforma a pantalla
+        const punta = transformarVertice([0, -27], juego.x, juego.y, juego.angulo);
+        juego.proyectiles.push({
+        x: punta[0], y: punta[1],
+        vx: Math.sin(r) * 470, vy: -Math.cos(r) * 470, vida: 2.2
+        });
+        juego.ultimo_disparo = ahora;
+    }
+    // Comprar/cambiar el rastro de fuego por 5 puntos
+    if (e.code === 'KeyC' && juego.puntos >= COSTO_RASTRO) {
+        juego.puntos -= COSTO_RASTRO;
+        juego.trail_indice = (juego.trail_indice + 1) % coloresRastro.length;
+    }
+    } else if (juego.estado === 'perdiste' && e.code === 'Enter') {
+    juego = reiniciarJuego();
+    }
+});
+addEventListener('keyup', (e) => teclas.delete(e.code));
+addEventListener('blur', () => teclas.clear());
+
+canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const caja = canvas.getBoundingClientRect();
+    const mx = (e.clientX - caja.left) * ANCHO / caja.width;
+    const my = (e.clientY - caja.top) * ALTO / caja.height;
+    const ahora = performance.now();
+
+    if (juego.estado === 'perdiste') {
+    if (dentro(botonReintentar, mx, my)) {
+        juego = reiniciarJuego();
+    } else if (dentro(botonMenu, mx, my)) {
+        juego.estado = 'menu';
+    } else if (dentro(botonContinuar, mx, my) && juego.puntos >= COSTO_CONTINUAR) {
+        juego.puntos -= COSTO_CONTINUAR;
+        juego.x = ANCHO / 2; juego.y = ALTO / 2;
+        juego.vx = 0; juego.vy = 0; juego.angulo = 0;
+        juego.objetos.length = 0;
+        juego.proyectiles.length = 0;
+        juego.invulnerable_hasta = ahora + 3000;
+        juego.estado = 'jugando';
+    }
+    } else if (juego.estado === 'menu') {
+    if (dentro(botonMenuPrincipal, mx, my)) juego = reiniciarJuego();
+    }
+});
+
+// ------------------------------------------------------------
+// BUCLE PRINCIPAL
+// ------------------------------------------------------------
+let anterior = performance.now();
+
+function bucle() {
+    const ahora = performance.now();
+    const dt = Math.max(0, Math.min((ahora - anterior) / 1000, 0.04));
+    anterior = ahora;
+    dibujarFondo(ahora);
+
+    // --------------------------------------------------------
+    // JUGANDO
+    // --------------------------------------------------------
+    if (juego.estado === 'jugando') {
+    // Rotación suave en grados por segundo
+    if (teclas.has('KeyA') || teclas.has('ArrowLeft')) juego.angulo -= 190 * dt;
+    if (teclas.has('KeyD') || teclas.has('ArrowRight')) juego.angulo += 190 * dt;
+
+    // Avanzar y retroceder en la dirección a la que apunta la nave
+    const r = juego.angulo * Math.PI / 180;
+    const aceleracion = 230;
+    if (teclas.has('KeyW') || teclas.has('ArrowUp')) {
+        juego.vx += Math.sin(r) * aceleracion * dt;
+        juego.vy -= Math.cos(r) * aceleracion * dt;
+    }
+    if (teclas.has('KeyS') || teclas.has('ArrowDown')) {
+        juego.vx -= Math.sin(r) * aceleracion * dt;
+        juego.vy += Math.cos(r) * aceleracion * dt;
+    }
+
+    // Fricción espacial (0.992 por cada 1/60 s) y límite de velocidad
+    const friccion = Math.pow(0.992, dt * 60);
+    juego.vx *= friccion; juego.vy *= friccion;
+    const rapidez = Math.hypot(juego.vx, juego.vy);
+    const maxRapidez = 260;
+    if (rapidez > maxRapidez) {
+        juego.vx = juego.vx / rapidez * maxRapidez;
+        juego.vy = juego.vy / rapidez * maxRapidez;
+    }
+
+    juego.x += juego.vx * dt;
+    juego.y += juego.vy * dt;
+
+    // Pantalla envolvente por los cuatro bordes
+    juego.x = ((juego.x % ANCHO) + ANCHO) % ANCHO;
+    juego.y = ((juego.y % ALTO) + ALTO) % ALTO;
+
+    // Generar meteoritos y enemigos con intervalos
+    if (ahora - juego.ultimo_meteorito > 1050) {
+        juego.objetos.push(crearMeteorito());
+        juego.ultimo_meteorito = ahora;
+    }
+    if (ahora - juego.ultimo_enemigo > 3200) {
+        juego.objetos.push(crearNaveEnemiga());
+        juego.ultimo_enemigo = ahora;
+    }
+
+    // Actualizar proyectiles y eliminarlos al salir o caducar
+    for (const p of [...juego.proyectiles]) {
+        p.x += p.vx * dt; p.y += p.vy * dt; p.vida -= dt;
+        if (p.vida <= 0 || p.x < 0 || p.x >= ANCHO || p.y < 0 || p.y >= ALTO) {
+        juego.proyectiles.splice(juego.proyectiles.indexOf(p), 1);
+        } else {
+        circulo(Math.trunc(p.x), Math.trunc(p.y), 4, AMARILLO);
+        circulo(Math.trunc(p.x), Math.trunc(p.y), 2, [255, 250, 205]);
+        }
+    }
+
+    // Mover objetos enemigos
+    for (const objeto of [...juego.objetos]) {
+        objeto.x += objeto.vx * dt;
+        objeto.y += objeto.vy * dt;
+        objeto.angulo += (objeto.giro || 0) * dt;
+
+        // Los objetos también envuelven la pantalla para que sigan siendo amenazas
+        objeto.x = ((objeto.x % ANCHO) + ANCHO) % ANCHO;
+        objeto.y = ((objeto.y % ALTO) + ALTO) % ALTO;
+
+        if (objeto.tipo === 'meteorito') {
+        dibujarMeteorito(objeto);
+        } else {
+        // Enemigos se orientan aproximadamente hacia el jugador
+        objeto.angulo = Math.atan2(juego.y - objeto.y, juego.x - objeto.x) * 180 / Math.PI + 90;
+        dibujarEnemigo(objeto);
+        }
+
+        // Impactos entre proyectiles y objetos
+        let impacto = false;
+        for (const p of [...juego.proyectiles]) {
+        const distancia = Math.hypot(objeto.x - p.x, objeto.y - p.y);
+        if (distancia < objeto.radio + 5) {
+            const i = juego.proyectiles.indexOf(p);
+            if (i >= 0) juego.proyectiles.splice(i, 1);
+            impacto = true;
+            break;
+        }
+        }
+
+        if (impacto) {
+        juego.explosiones.push(...crearExplosion(objeto.x, objeto.y, false));
+        juego.puntos += objeto.tipo === 'meteorito' ? 1 : randint(2, 5);
+        juego.objetos.splice(juego.objetos.indexOf(objeto), 1);
+        continue;
+        }
+
+        // Colisión con la nave: derrota, excepto durante invulnerabilidad
+        const distanciaNave = Math.hypot(objeto.x - juego.x, objeto.y - juego.y);
+        if (distanciaNave < objeto.radio + 17 && ahora >= juego.invulnerable_hasta) {
+        juego.explosiones.push(...crearExplosion(juego.x, juego.y, true));
+        juego.estado = 'perdiste';
+        break;
+        }
+    }
+
+    dibujarExplosion(juego.explosiones, dt);
+
+    // Dibujar la nave y su rastro de fuego
+    dibujarNave(juego.x, juego.y, juego.angulo, ahora,
+                coloresRastro[juego.trail_indice], ahora < juego.invulnerable_hasta);
+
+    // Interfaz del juego
+    rectRedondeado(10, 10, 430, 96, 10);
+    ctx.fillStyle = col([5, 8, 25]); ctx.fill();
+    dibujarTexto('PUNTOS: ' + juego.puntos, FUENTE, AMARILLO, 22, 18);
+    dibujarTexto('W/↑ avanzar | S/↓ retroceder | A-D girar | ESPACIO disparar', FUENTE_CHICA, BLANCO, 22, 47);
+    dibujarTexto('C: cambiar rastro (' + COSTO_RASTRO + ' pts) | Rastro: ' + nombresRastro[juego.trail_indice],
+                    FUENTE_CHICA, coloresRastro[juego.trail_indice], 22, 72);
+
+    // --------------------------------------------------------
+    // PANTALLA DE DERROTA
+    // --------------------------------------------------------
+    } else if (juego.estado === 'perdiste') {
+    // Continuar animando las explosiones aunque la partida haya terminado
+    dibujarExplosion(juego.explosiones, dt);
+
+    const velo = 1 + 0.06 * Math.sin(ahora * 0.009);
+    ctx.save();
+    ctx.translate(ANCHO / 2, 285 + Math.sin(ahora * 0.006) * 8);
+    ctx.scale(velo, velo);
+    dibujarTexto('YOU LOST', FUENTE_TITULO, ROJO, 0, 0, true);
+    ctx.restore();
+
+    dibujarTexto('Puntos obtenidos: ' + juego.puntos, FUENTE, AMARILLO, ANCHO / 2, 350, true);
+
+    boton(botonReintentar, '↻  Reintentar');
+    boton(botonMenu, 'Menu');
+    const habilitado = juego.puntos >= COSTO_CONTINUAR;
+    boton(botonContinuar, 'Continuar (10 pts)', habilitado);
+
+    if (!habilitado) {
+        dibujarTexto('Necesitas 10 puntos para continuar', FUENTE_CHICA, GRIS, ANCHO / 2, 555, true);
+    } else {
+        dibujarTexto('Gasta 10 puntos para volver con proteccion temporal', FUENTE_CHICA, VERDE, ANCHO / 2, 555, true);
+    }
+
+    // --------------------------------------------------------
+    // MENÚ SENCILLO
+    // --------------------------------------------------------
+    } else if (juego.estado === 'menu') {
+    dibujarTexto('GALAXIA VECTORIAL', FUENTE_TITULO, CIAN, ANCHO / 2, 280, true);
+    dibujarTexto('Menu provisional: vuelve al juego con una partida nueva.', FUENTE, BLANCO, ANCHO / 2, 355, true);
+    boton(botonMenuPrincipal, 'Nueva partida');
+    dibujarTexto('W/S mover | A/D girar | Espacio disparar | C cambiar rastro', FUENTE_CHICA, GRIS, ANCHO / 2, 510, true);
+    }
+
+    requestAnimationFrame(bucle);
+}
+requestAnimationFrame(bucle);
+</script>
+</body>
+</html>
